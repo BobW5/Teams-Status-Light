@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Teams Standalone Bridge</title>
+    <title>Standalone Teams LED Command Center</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #0f0f15; color: #e0e0e0; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
         .panel { width: 100%; max-width: 700px; background: #1e1e24; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); margin-bottom: 20px; }
@@ -21,13 +21,13 @@
         .ascii { color: #0aa; white-space: pre; font-size: 13px; line-height: 1.2; margin-bottom: 15px; text-align: center;}
         .log-entry { margin: 4px 0; font-size: 14px; color: #888; }
         
-        .c-green { color: #4CAF50; } .c-red { color: #f44336; } .c-yellow { color: #FFEB3B; }
+        .c-green { color: #4CAF50; } .c-red { color: #f44336; } .c-yellow { color: #FFEB3B; } .c-gray { color: #888; }
     </style>
 </head>
 <body>
 
     <div class="panel">
-        <h2>Teams Status Bridge</h2>
+        <h2>Teams BLE App (No Admin Required)</h2>
         
         <label>1. Connect Hardware:</label>
         <select id="deviceType">
@@ -61,10 +61,11 @@
     <script>
         let ledChar = null;
         let fileHandle = null;
-        let lastKnownTeamsStatus = null;
+        let lastKnownCategory = null;
         const POLL_INTERVAL = 2000; 
         const logArray = [];
 
+        // Note: Payloads only need the 4 core categories now.
         const CONFIG = {
             BJ_LED_M: {
                 name: 'BJ_LED_M',
@@ -80,13 +81,31 @@
             }
         };
 
+        // --- NEW: THE TRANSLATOR ENGINE ---
+        function mapToCategory(rawStatus) {
+            let s = rawStatus.toLowerCase();
+            if (s.includes("available")) return "Available";
+            // Group all the "busy" variants into one Red trigger
+            if (s.includes("busy") || s.includes("disturb") || s.includes("call") || s.includes("meeting") || s.includes("presenting")) return "Busy";
+            if (s.includes("away") || s.includes("right back")) return "Away";
+            if (s.includes("offline")) return "Offline";
+            return "Unknown";
+        }
+
+        function getStatusColor(category) {
+            if (category === "Available") return "c-green";
+            if (category === "Busy") return "c-red";
+            if (category === "Away") return "c-yellow";
+            return "c-gray";
+        }
+
         // --- DATABASE LOGIC (INDEXED DB) ---
         const DB_NAME = "TeamsBridgeDB";
         const STORE_NAME = "handles";
 
         function initDB() {
             return new Promise((resolve, reject) => {
-                const request = indexedDB.open(DB_NAME, 2); // Incremented version
+                const request = indexedDB.open(DB_NAME, 2); 
                 request.onupgradeneeded = (e) => { 
                     if (!e.target.result.objectStoreNames.contains(STORE_NAME)) {
                         e.target.result.createObjectStore(STORE_NAME); 
@@ -100,7 +119,7 @@
         async function saveHandle(handle) {
             const db = await initDB();
             const tx = db.transaction(STORE_NAME, 'readwrite');
-            tx.objectStore(STORE_NAME).put(handle, 'teamsFile'); // Saved as 'teamsFile' now
+            tx.objectStore(STORE_NAME).put(handle, 'teamsFile'); 
             checkSavedHandle();
         }
 
@@ -149,21 +168,23 @@
             }
         }
 
-        async function updateLEDStatus(status) {
+        async function updateLEDStatus(category) {
             if (!ledChar) return;
             const type = document.getElementById('deviceType').value;
             const settings = CONFIG[type];
 
-            if (status === "Offline") {
+            // If the category is Offline, just send the Power Off command and stop.
+            if (category === "Offline") {
                 await ledChar.writeValueWithoutResponse(new Uint8Array(settings.payloads["Offline"]));
                 return;
             }
 
+            // Otherwise, send Power ON, then the Color command.
             let onPayload = (type === "BJ_LED_M") ? [0x69, 0x96, 0x02, 0x01, 0x01] : [0x7e, 0x00, 0x04, 0x01, 0x01, 0x00, 0x00, 0x00, 0xef];
             try {
                 await ledChar.writeValueWithoutResponse(new Uint8Array(onPayload));
                 setTimeout(async () => {
-                    await ledChar.writeValueWithoutResponse(new Uint8Array(settings.payloads[status]));
+                    await ledChar.writeValueWithoutResponse(new Uint8Array(settings.payloads[category]));
                 }, 150);
             } catch (e) { console.error("BLE Write Error:", e); }
         }
@@ -171,12 +192,8 @@
         // --- LOCAL FILE LOGIC ---
         async function selectLogFile() {
             try {
-                // Now asks for a specific file, not a folder
                 const [handle] = await window.showOpenFilePicker({
-                    types: [{
-                        description: 'Text/Log Files',
-                        accept: {'text/plain': ['.txt', '.log']}
-                    }]
+                    types: [{ description: 'Text/Log Files', accept: {'text/plain': ['.txt', '.log']} }]
                 });
                 fileHandle = handle;
                 await saveHandle(fileHandle); 
@@ -214,22 +231,35 @@
         async function checkTeamsLog() {
             if (!fileHandle) return;
             try {
-                // Read the specific file directly
                 const file = await fileHandle.getFile();
-                const text = await file.text();
+                const timeSinceLastModify = Date.now() - file.lastModified;
                 
+                // Alert if file hasn't been updated in 1 hour (Log Rollover protection)
+                if (timeSinceLastModify > 3600000) {
+                    document.getElementById('teamsStatus').innerText = "⚠️ Log Stale: Please select today's newest log file.";
+                    document.getElementById('teamsStatus').style.borderColor = "#FFEB3B"; 
+                    return; 
+                }
+
+                const text = await file.text();
                 const tail = text.slice(-5000); 
                 const lines = tail.split('\n');
                 
                 for (let i = lines.length - 1; i >= 0; i--) {
-                    const match = lines[i].match(/status (Available|Busy|Do not disturb|Away|Offline)/);
+                    // NEW: Broadened Regex to catch weird formats like "DoNotDisturb" and "In a call"
+                    const match = lines[i].match(/(?:status|presence)[\s:'"]+(Available|Busy|Do not disturb|DoNotDisturb|In a call|In a meeting|Presenting|Away|Be right back|Offline)/i);
+                    
                     if (match) {
-                        let currentStatus = match[1];
-                        if (currentStatus !== lastKnownTeamsStatus) {
-                            lastKnownTeamsStatus = currentStatus;
+                        let rawStatus = match[1];
+                        let category = mapToCategory(rawStatus); // Run it through the translator
+                        
+                        if (category !== "Unknown" && category !== lastKnownCategory) {
+                            lastKnownCategory = category;
                             const timeStr = new Date().toLocaleTimeString();
-                            addLog(`[${timeStr}] Teams updated to: ${currentStatus}`, getStatusColor(currentStatus));
-                            updateLEDStatus(currentStatus);
+                            
+                            // Log the raw status, but send the category color to the light
+                            addLog(`[${timeStr}] Teams: ${rawStatus} -> Mapped to: ${category}`, getStatusColor(category));
+                            updateLEDStatus(category);
                         }
                         break; 
                     }
@@ -237,13 +267,6 @@
             } catch (e) {
                 console.error("Read Error:", e);
             }
-        }
-
-        function getStatusColor(status) {
-            if (status === "Available") return "c-green";
-            if (status.includes("Busy") || status.includes("disturb")) return "c-red";
-            if (status === "Away") return "c-yellow";
-            return "";
         }
 
         function addLog(message, cssClass) {
