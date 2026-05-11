@@ -347,6 +347,9 @@
                 const lines = tail.split('\n');
                 
                 for (let i = lines.length - 1; i >= 0; i--) {
+                    // NEW: Ignore multi-account broadcast lines to prevent Guest Tenant confusion
+                    if (lines[i].includes("UserDataGlobalState")) continue;
+
                     const match = lines[i].match(/(?:status|presence|availability)[\s:'"]+(Available|Busy|Do not disturb|DoNotDisturb|In a call|In a meeting|Presenting|Away|Be right back|Offline)/i);
                     
                     if (match) {
