@@ -1,27 +1,31 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Teams Status Bridge</title>
+    <title>Standalone Teams Command Center</title>
     <style>
         body { font-family: 'Segoe UI', Tahoma, sans-serif; background: #0f0f15; color: #e0e0e0; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
         .panel { width: 100%; max-width: 700px; background: #1e1e24; padding: 20px; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); margin-bottom: 20px; }
         h2 { margin-top: 0; color: #2196F3; font-size: 24px; text-align: center; }
         label { display: block; margin-bottom: 5px; color: #aaa; font-size: 14px; font-weight: bold; }
-        select { width: 100%; padding: 12px; margin-bottom: 15px; border-radius: 8px; background: #2a2a30; color: white; border: 1px solid #444; cursor: pointer; }
+        
+        select, .input-field { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; background: #2a2a30; color: white; border: 1px solid #444; box-sizing: border-box; font-family: inherit; }
+        select { cursor: pointer; margin-bottom: 15px; }
+        .input-field:focus { outline: none; border-color: #2196F3; }
         
         .btn-group { display: flex; gap: 10px; margin: 10px 0; }
-        button { flex: 1; padding: 15px; font-size: 15px; font-weight: bold; cursor: pointer; border-radius: 8px; border: none; color: white; transition: 0.2s; }
+        button { flex: 1; padding: 12px; font-size: 15px; font-weight: bold; cursor: pointer; border-radius: 8px; border: none; color: white; transition: 0.2s; }
         .btn-blue { background: #2196F3; } .btn-blue:hover { background: #1976D2; }
         .btn-purple { background: #9C27B0; } .btn-purple:hover { background: #7B1FA2; }
         .btn-green { background: #4CAF50; } .btn-green:hover { background: #388E3C; }
+        .btn-gray { background: #555; } .btn-gray:hover { background: #444; }
         button:disabled { background: #333; color: #666; cursor: not-allowed; }
         
-        .status-box { margin-top: 10px; font-size: 14px; padding: 12px; background: #121215; border-radius: 8px; border-left: 4px solid #444; }
+        .status-box { margin-top: 10px; font-size: 14px; padding: 12px; background: #121215; border-radius: 8px; border-left: 4px solid #444; display: flex; justify-content: space-between; align-items: center;}
         .terminal { width: 100%; max-width: 700px; background: #000; border: 2px solid #0ff; border-radius: 5px; padding: 15px; font-family: 'Consolas', monospace; box-sizing: border-box; }
         .ascii { color: #0aa; white-space: pre; font-size: 13px; line-height: 1.2; margin-bottom: 15px; text-align: center;}
         .log-entry { margin: 4px 0; font-size: 14px; color: #888; }
         
-        .c-green { color: #4CAF50; } .c-red { color: #f44336; } .c-yellow { color: #FFEB3B; } .c-gray { color: #888; }
+        .c-green { color: #4CAF50; } .c-red { color: #f44336; } .c-yellow { color: #FFEB3B; } .c-gray { color: #888; } .c-blue { color: #2196F3; }
     </style>
 </head>
 <body>
@@ -29,26 +33,38 @@
     <div class="panel">
         <h2>Teams Status Bridge</h2>
         
-        <label>1. Connect Hardware:</label>
+        <label>1. Local Hardware (Bluetooth):</label>
         <select id="deviceType">
             <option value="BJ_LED_M">BJ_LED_M (MagicStrip Protocol)</option>
             <option value="ELK_BLEDOM">ELK-BLEDOM (Hi-Lighting Protocol)</option>
         </select>
-        <button id="connectBtn" class="btn-blue" onclick="connectBLE()">Connect Bluetooth</button>
+        <button id="connectBtn" class="btn-blue" style="width: 100%; margin-bottom: 15px;" onclick="connectBLE()">Connect Bluetooth</button>
 
-        <label style="margin-top: 15px;">2. Access Local Log File:</label>
+        <label>2. Cloud Sync (Adafruit IO):</label>
+        <input type="text" id="aioUser" class="input-field" placeholder="Adafruit Username">
+        <input type="password" id="aioKey" class="input-field" placeholder="Active Key (aio_...)">
+        <input type="text" id="aioFeed" class="input-field" placeholder="Feed Key (e.g., teams-status)">
+        <div class="btn-group">
+            <button id="aioSaveBtn" class="btn-green" onclick="saveAIO()">Save & Enable</button>
+            <button id="aioDisableBtn" class="btn-gray" onclick="disableAIO()">Disable</button>
+        </div>
+
+        <label style="margin-top: 15px;">3. Access Local Log File:</label>
         <div class="btn-group">
             <button id="restoreBtn" class="btn-green" onclick="restoreLogFile()" disabled>Restore Saved File</button>
             <button id="folderBtn" class="btn-purple" onclick="selectLogFile()">Select Log File</button>
         </div>
 
-        <div class="status-box" id="status" style="border-color: #f44336;">BLE Status: Disconnected</div>
-        <div class="status-box" id="teamsStatus" style="border-color: #f44336;">File Reader: Waiting for file access...</div>
+        <div style="margin-top: 20px;">
+            <div class="status-box" id="status" style="border-color: #f44336;">BLE Light: <span>Disconnected</span></div>
+            <div class="status-box" id="aioStatus" style="border-color: #444;">Adafruit IO: <span>Disabled</span></div>
+            <div class="status-box" id="teamsStatus" style="border-color: #f44336;">File Reader: <span>Waiting for access...</span></div>
+        </div>
     </div>
 
     <div class="terminal">
         <div class="ascii">
-  ~~~ TEAMS STANDALONE BRIDGE ~~~
+  ~~~ TEAMS COMMAND CENTER ~~~
  _____                          _
 |_   _|__  __ _ _ __ ___  ___  | |
   | |/ _ \/ _` | '_ ` _ \/ __| | |
@@ -62,10 +78,10 @@
         let ledChar = null;
         let fileHandle = null;
         let lastKnownCategory = null;
+        let aioEnabled = false;
         const POLL_INTERVAL = 2000; 
         const logArray = [];
 
-        // Note: Payloads only need the 4 core categories now.
         const CONFIG = {
             BJ_LED_M: {
                 name: 'BJ_LED_M',
@@ -81,11 +97,10 @@
             }
         };
 
-        // --- NEW: THE TRANSLATOR ENGINE ---
+        // --- TRANSLATOR ENGINE ---
         function mapToCategory(rawStatus) {
             let s = rawStatus.toLowerCase();
             if (s.includes("available")) return "Available";
-            // Group all the "busy" variants into one Red trigger
             if (s.includes("busy") || s.includes("disturb") || s.includes("call") || s.includes("meeting") || s.includes("presenting")) return "Busy";
             if (s.includes("away") || s.includes("right back")) return "Away";
             if (s.includes("offline")) return "Offline";
@@ -99,7 +114,92 @@
             return "c-gray";
         }
 
-        // --- DATABASE LOGIC (INDEXED DB) ---
+        // --- ADAFRUIT IO LOGIC (NEW) ---
+        function loadAIO() {
+            const saved = localStorage.getItem('aio_settings');
+            if (saved) {
+                const data = JSON.parse(saved);
+                document.getElementById('aioUser').value = data.user || '';
+                document.getElementById('aioKey').value = data.key || '';
+                document.getElementById('aioFeed').value = data.feed || '';
+                if (data.enabled) {
+                    aioEnabled = true;
+                    updateAioStatus("Enabled & Ready", "#2196F3");
+                }
+            }
+        }
+
+        function saveAIO() {
+            const user = document.getElementById('aioUser').value.trim();
+            const key = document.getElementById('aioKey').value.trim();
+            const feed = document.getElementById('aioFeed').value.trim();
+            
+            if (!user || !key || !feed) {
+                alert("Please fill in all Adafruit IO fields.");
+                return;
+            }
+
+            const config = { user, key, feed, enabled: true };
+            localStorage.setItem('aio_settings', JSON.stringify(config));
+            aioEnabled = true;
+            updateAioStatus("Saved & Enabled", "#4CAF50");
+            addLog("Adafruit IO settings saved.", "c-blue");
+            
+            // If we already have a status, push it immediately
+            if (lastKnownCategory) sendToAdafruit(lastKnownCategory);
+        }
+
+        function disableAIO() {
+            aioEnabled = false;
+            const saved = localStorage.getItem('aio_settings');
+            if (saved) {
+                const data = JSON.parse(saved);
+                data.enabled = false;
+                localStorage.setItem('aio_settings', JSON.stringify(data));
+            }
+            updateAioStatus("Disabled", "#444");
+            addLog("Adafruit IO sync disabled.", "c-gray");
+        }
+
+        function updateAioStatus(text, color) {
+            const box = document.getElementById('aioStatus');
+            box.style.borderColor = color;
+            box.innerHTML = `Adafruit IO: <span style="color:${color}; font-weight:bold;">${text}</span>`;
+        }
+
+        async function sendToAdafruit(statusCategory) {
+            if (!aioEnabled) return;
+
+            const saved = localStorage.getItem('aio_settings');
+            if (!saved) return;
+            const config = JSON.parse(saved);
+
+            const url = `https://io.adafruit.com/api/v2/${config.user}/feeds/${config.feed}/data`;
+            
+            try {
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'X-AIO-Key': config.key,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ value: statusCategory })
+                });
+
+                if (response.ok) {
+                    addLog(`☁️ Pushed to Adafruit IO: ${statusCategory}`, "c-blue");
+                } else {
+                    addLog(`☁️ Error: Adafruit IO rejected payload (Check Keys)`, "c-red");
+                }
+            } catch (error) {
+                addLog(`☁️ Error: Could not connect to Adafruit IO`, "c-red");
+            }
+        }
+
+        // Initialize Adafruit UI on load
+        loadAIO();
+
+        // --- DATABASE LOGIC (FILE MEMORY) ---
         const DB_NAME = "TeamsBridgeDB";
         const STORE_NAME = "handles";
 
@@ -147,9 +247,9 @@
         async function connectBLE() {
             const type = document.getElementById('deviceType').value;
             const settings = CONFIG[type];
-            const status = document.getElementById('status');
+            const statusBox = document.getElementById('status');
             try {
-                status.innerText = "BLE Status: Opening Picker...";
+                statusBox.innerHTML = `BLE Light: <span style="color:#FFEB3B;">Opening Picker...</span>`;
                 const device = await navigator.bluetooth.requestDevice({
                     acceptAllDevices: true,
                     optionalServices: [CONFIG.BJ_LED_M.service, CONFIG.ELK_BLEDOM.service]
@@ -158,13 +258,13 @@
                 const service = await server.getPrimaryService(settings.service);
                 ledChar = await service.getCharacteristic(settings.char);
                 
-                status.innerText = "BLE Status: Connected to " + device.name + "!";
-                status.style.borderColor = "#4CAF50";
+                statusBox.style.borderColor = "#4CAF50";
+                statusBox.innerHTML = `BLE Light: <span style="color:#4CAF50; font-weight:bold;">Connected</span>`;
                 document.getElementById('connectBtn').disabled = true;
                 document.getElementById('deviceType').disabled = true;
             } catch (error) {
-                status.innerText = "BLE Error: " + error.message;
-                status.style.borderColor = "#f44336";
+                statusBox.style.borderColor = "#f44336";
+                statusBox.innerHTML = `BLE Light: <span style="color:#f44336; font-weight:bold;">Failed</span>`;
             }
         }
 
@@ -173,13 +273,11 @@
             const type = document.getElementById('deviceType').value;
             const settings = CONFIG[type];
 
-            // If the category is Offline, just send the Power Off command and stop.
             if (category === "Offline") {
                 await ledChar.writeValueWithoutResponse(new Uint8Array(settings.payloads["Offline"]));
                 return;
             }
 
-            // Otherwise, send Power ON, then the Color command.
             let onPayload = (type === "BJ_LED_M") ? [0x69, 0x96, 0x02, 0x01, 0x01] : [0x7e, 0x00, 0x04, 0x01, 0x01, 0x00, 0x00, 0x00, 0xef];
             try {
                 await ledChar.writeValueWithoutResponse(new Uint8Array(onPayload));
@@ -222,8 +320,11 @@
         function startMonitoring() {
             document.getElementById('folderBtn').disabled = true;
             document.getElementById('restoreBtn').disabled = true;
-            document.getElementById('teamsStatus').innerText = `File Reader: Monitoring ${fileHandle.name}`;
-            document.getElementById('teamsStatus').style.borderColor = "#4CAF50";
+            
+            const tb = document.getElementById('teamsStatus');
+            tb.style.borderColor = "#4CAF50";
+            tb.innerHTML = `File Reader: <span style="color:#4CAF50; font-weight:bold;">Monitoring ${fileHandle.name}</span>`;
+            
             addLog(`Access to ${fileHandle.name} granted. Starting monitor...`, "c-green");
             setInterval(checkTeamsLog, POLL_INTERVAL);
         }
@@ -234,10 +335,10 @@
                 const file = await fileHandle.getFile();
                 const timeSinceLastModify = Date.now() - file.lastModified;
                 
-                // Alert if file hasn't been updated in 1 hour (Log Rollover protection)
                 if (timeSinceLastModify > 3600000) {
-                    document.getElementById('teamsStatus').innerText = "⚠️ Log Stale: Please select today's newest log file.";
-                    document.getElementById('teamsStatus').style.borderColor = "#FFEB3B"; 
+                    const tb = document.getElementById('teamsStatus');
+                    tb.style.borderColor = "#FFEB3B";
+                    tb.innerHTML = `File Reader: <span style="color:#FFEB3B; font-weight:bold;">Log Stale (Please re-select)</span>`;
                     return; 
                 }
 
@@ -246,20 +347,21 @@
                 const lines = tail.split('\n');
                 
                 for (let i = lines.length - 1; i >= 0; i--) {
-                    // NEW: Added 'availability' to the trigger words
                     const match = lines[i].match(/(?:status|presence|availability)[\s:'"]+(Available|Busy|Do not disturb|DoNotDisturb|In a call|In a meeting|Presenting|Away|Be right back|Offline)/i);
                     
                     if (match) {
                         let rawStatus = match[1];
-                        let category = mapToCategory(rawStatus); // Run it through the translator
+                        let category = mapToCategory(rawStatus); 
                         
                         if (category !== "Unknown" && category !== lastKnownCategory) {
                             lastKnownCategory = category;
                             const timeStr = new Date().toLocaleTimeString();
                             
-                            // Log the raw status, but send the category color to the light
                             addLog(`[${timeStr}] Teams: ${rawStatus} -> Mapped to: ${category}`, getStatusColor(category));
+                            
+                            // Trigger both hardware and cloud updates!
                             updateLEDStatus(category);
+                            sendToAdafruit(category);
                         }
                         break; 
                     }
