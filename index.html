@@ -246,8 +246,8 @@
                 const lines = tail.split('\n');
                 
                 for (let i = lines.length - 1; i >= 0; i--) {
-                    // NEW: Broadened Regex to catch weird formats like "DoNotDisturb" and "In a call"
-                    const match = lines[i].match(/(?:status|presence)[\s:'"]+(Available|Busy|Do not disturb|DoNotDisturb|In a call|In a meeting|Presenting|Away|Be right back|Offline)/i);
+                    // NEW: Added 'availability' to the trigger words
+                    const match = lines[i].match(/(?:status|presence|availability)[\s:'"]+(Available|Busy|Do not disturb|DoNotDisturb|In a call|In a meeting|Presenting|Away|Be right back|Offline)/i);
                     
                     if (match) {
                         let rawStatus = match[1];
